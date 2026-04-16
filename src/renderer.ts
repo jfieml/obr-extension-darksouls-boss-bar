@@ -58,7 +58,7 @@ async function drawDS1(
   // above y=0, with at least 4 px of breathing room.
   const capHeight  = fs * 0.91;
   const strokeHalf = Math.max(1, fs * 0.06);
-  const topPad     = Math.max(6, Math.ceil(4 + capHeight + strokeHalf - 42 * s));
+  const topPad     = Math.max(6, Math.ceil(10 + capHeight + strokeHalf - 42 * s));
 
   canvas.height = topPad + barH;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
