@@ -1,3 +1,4 @@
+import { assetUrl } from "./assetBase";
 import { type BossBarData } from "./types";
 
 // ── Image cache ────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ async function drawDS1(
   canvas: HTMLCanvasElement,
   data: BossBarData,
 ) {
-  const frame = await loadImage("/assets/ds1/boss_health_bar.png");
+  const frame = await loadImage(assetUrl("ds1", "boss_health_bar.png"));
   await document.fonts.ready;
 
   const s    = canvas.width / frame.width;
@@ -103,9 +104,9 @@ async function drawDS2(
   data: BossBarData,
 ) {
   const [frame, yellow, red] = await loadAll([
-    "/assets/ds2/boss_health_frame.png",
-    "/assets/ds2/boss_health_yellow.png",
-    "/assets/ds2/boss_health_red.png",
+    assetUrl("ds2", "boss_health_frame.png"),
+    assetUrl("ds2", "boss_health_yellow.png"),
+    assetUrl("ds2", "boss_health_red.png"),
   ]);
 
   const sidePad = 24;
@@ -122,9 +123,11 @@ async function drawDS2(
   const ix = sidePad + Math.round(14 * s);
   const iw = Math.round(664 * s);
 
+  // Frame is the background track (frameIsBackground = true): draw first,
+  // then layer yellow and red fills on top — matching the map-item z-order.
+  ctx.drawImage(frame, sidePad, topPad + nameH, drawW, barH);
   drawClipped(ctx, yellow, ix, topPad + nameH, iw, barH, iw);
   drawClipped(ctx, red,    ix, topPad + nameH, iw, barH, Math.round(iw * health));
-  ctx.drawImage(frame, sidePad, topPad + nameH, drawW, barH);
 
   await document.fonts.ready;
   const fs = Math.max(13, Math.round(30 * s));
@@ -147,8 +150,8 @@ async function drawDS3(
   data: BossBarData,
 ) {
   const [frame, red] = await loadAll([
-    "/assets/ds3/boss_health_frame.png",
-    "/assets/ds3/boss_health_red.png",
+    assetUrl("ds3", "boss_health_frame.png"),
+    assetUrl("ds3", "boss_health_red.png"),
   ]);
 
   const sidePad = 24;
@@ -200,11 +203,11 @@ async function drawEldenRing(
   data: BossBarData,
 ) {
   const [base, frame, yellow, red, tip] = await loadAll([
-    "/assets/eldenring/boss_health_base.png",
-    "/assets/eldenring/boss_health_frame.png",
-    "/assets/eldenring/boss_health_yellow.png",
-    "/assets/eldenring/boss_health_red.png",
-    "/assets/eldenring/boss_health_tip.png",
+    assetUrl("eldenring", "boss_health_base.png"),
+    assetUrl("eldenring", "boss_health_frame.png"),
+    assetUrl("eldenring", "boss_health_yellow.png"),
+    assetUrl("eldenring", "boss_health_red.png"),
+    assetUrl("eldenring", "boss_health_tip.png"),
   ]);
 
   const sidePad = 24;
