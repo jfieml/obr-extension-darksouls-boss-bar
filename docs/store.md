@@ -69,4 +69,4 @@ All game assets remain the property of FromSoftware and their respective rights 
 
 ## Support
 
-If you run into a bug or have a feature request, please open an issue on [GitHub](https://github.com/YOUR_USERNAME/dark-souls-utility).
+If you run into a bug or have a feature request, please open an issue on [GitHub](https://github.com/jfieml/obr-extension-darksouls-boss-bar/issues).

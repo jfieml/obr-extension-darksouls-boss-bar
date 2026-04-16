@@ -6,7 +6,9 @@
 
 type AssetSource = "github" | "server";
 
-const ASSET_SOURCE: AssetSource = "github";
+// In dev mode Vite serves local /assets from the dev server via GitHub CDN.
+// In a production build assets are bundled under /assets at the extension origin.
+const ASSET_SOURCE: AssetSource = import.meta.env.DEV ? "github" : "server";
 
 const GITHUB_BASE =
   "https://raw.githubusercontent.com/Sibert-Aerts/sibert-aerts.github.io" +

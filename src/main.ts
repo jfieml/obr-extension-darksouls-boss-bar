@@ -281,19 +281,55 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
 
 OBR.onReady(async () => {
   const app  = document.querySelector<HTMLDivElement>("#app")!;
+
+  // Apply OBR dark/light theme to the document so CSS variables switch.
+  const applyTheme = (mode: "DARK" | "LIGHT") => {
+    document.body.dataset.theme = mode === "LIGHT" ? "light" : "dark";
+  };
+  try {
+    applyTheme((await OBR.theme.getTheme()).mode);
+  } catch {
+    applyTheme("DARK");
+  }
+  OBR.theme.onChange(t => applyTheme(t.mode));
+
   const role = await OBR.player.getRole();
 
-  const bars = await OBR.scene.items.getItems<Item>(isBossBar);
+  // Track the items-change subscription so it can be torn down when the
+  // scene closes (onReadyChange fires false) and re-established on reopen.
+  let unsubItems: (() => void) | null = null;
 
-  if (role === "GM") {
-    await mountGMUI(app, bars);
-    OBR.scene.items.onChange(async (items: Item[]) => {
-      await mountGMUI(app, items.filter(isBossBar));
-    });
-  } else {
-    await mountPlayerUI(app, bars.filter(b => b.visible !== false));
-    OBR.scene.items.onChange(async (items: Item[]) => {
-      await mountPlayerUI(app, items.filter(isBossBar).filter(b => b.visible !== false));
-    });
-  }
+  const handleReadyChange = async (ready: boolean) => {
+    unsubItems?.();
+    unsubItems = null;
+
+    if (!ready) {
+      app.innerHTML = `
+        <div class="no-scene">
+          <span>No scene is open.</span>
+          <span>Open or load a scene to use boss bars.</span>
+        </div>`;
+      // Player popovers are dynamically sized; collapse to a compact height.
+      if (role !== "GM") OBR.action.setHeight(100);
+      return;
+    }
+
+    const bars = await OBR.scene.items.getItems<Item>(isBossBar);
+    if (role === "GM") {
+      await mountGMUI(app, bars);
+      unsubItems = OBR.scene.items.onChange(async (items: Item[]) => {
+        await mountGMUI(app, items.filter(isBossBar));
+      });
+    } else {
+      await mountPlayerUI(app, bars.filter(b => b.visible !== false));
+      unsubItems = OBR.scene.items.onChange(async (items: Item[]) => {
+        await mountPlayerUI(app, items.filter(isBossBar).filter(b => b.visible !== false));
+      });
+    }
+  };
+
+  // Wire up ready-state listener before the initial check to avoid a race
+  // where the scene changes between the isReady call and onReadyChange.
+  OBR.scene.onReadyChange(handleReadyChange);
+  await handleReadyChange(await OBR.scene.isReady());
 });
