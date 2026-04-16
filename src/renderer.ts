@@ -47,15 +47,20 @@ async function drawDS1(
 ) {
   const frame = await loadImage("/assets/ds1/boss_health_bar.png");
 
-  const s      = canvas.width / frame.width;
-  const topPad = 12; // empty space above the boss name
-  const barH   = Math.round(frame.height * s);
-  canvas.height = topPad + barH;
+  const s          = canvas.width / frame.width;
+  const topPad     = 8;
+  // Dedicated name area above the frame, consistent with DS2/DS3/ER renderers
+  // and matching the map-item nameTY which is negative (above the bar).
+  const nameH      = Math.max(24, Math.round(32 * s));
+  const bottomPad  = 8;
+  const barH       = Math.round(frame.height * s);
+  canvas.height    = topPad + nameH + barH + bottomPad;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const health = clamp01(data);
+  const frameY = topPad + nameH;
   const bx = Math.round(80 * s);
-  const by = topPad + Math.round(64 * s);
+  const by = frameY + Math.round(64 * s);
   const bw = Math.round(1335 * s);
   const bh = Math.round(25 * s);
 
@@ -70,7 +75,7 @@ async function drawDS1(
     ctx.fillRect(bx, by, bw * health, bh);
   }
 
-  ctx.drawImage(frame, 0, topPad, canvas.width, barH);
+  ctx.drawImage(frame, 0, frameY, canvas.width, barH);
 
   await document.fonts.ready;
   const fs = Math.max(13, Math.round(58 * s));
@@ -80,7 +85,8 @@ async function drawDS1(
   ctx.strokeStyle = "rgba(0,0,0,0.65)";
   ctx.lineWidth = Math.max(1, fs * 0.12);
   const textX = Math.round(95 * s);
-  const textY = topPad + Math.round(42 * s);
+  // Baseline sits 4 px above the frame top — text is fully in the name area.
+  const textY = frameY - 4;
   ctx.strokeText(data.bossName, textX, textY);
   ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
   ctx.fillText(data.bossName, textX, textY);

@@ -303,6 +303,7 @@ input[type="range"] {
   padding: 0;
   border: none;
   min-height: unset; /* reset the input min-height from above */
+  margin-top: 8px;
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
