@@ -1,0 +1,76 @@
+---
+description: Project overview, architecture, and conventions for dark-souls-utility
+alwaysApply: true
+---
+
+# Dark Souls Utility — Owlbear Rodeo Extension
+
+A Vite + TypeScript extension for [Owlbear Rodeo](https://www.owlbear.rodeo) (VTT) that lets a GM display a Dark Souls–style boss health bar on the shared map. Five game styles are supported: `ds1`, `ds2`, `ds3`, `eldenring`, `sekiro`.
+
+## Key Concepts
+
+- **Two rendering paths** exist for the same data, and they must stay visually in sync:
+  1. **Canvas preview** (`renderer.ts`) — drawn with Canvas 2D API; used in the GM's popover panel and the player popover.
+  2. **Map items** (`mapItems.ts`) — four OBR scene items placed on the `PROP` layer; visible to all players on the shared map.
+- **`BossBarData`** (`types.ts`) is the shared data model: `{ bossName, currentHP, maxHP, gameStyle }`.
+- **Assets** are PNG frames served either from GitHub raw URLs (dev) or the extension origin (prod), controlled by `ASSET_SOURCE` in `assetBase.ts`.
+
+## File Map
+
+| File | Purpose |
+|------|---------|
+| `src/types.ts` | `BossBarData` type and `GameStyle` union |
+| `src/assetBase.ts` | `assetUrl(style, filename)` — resolves PNG URLs for both dev and prod |
+| `src/renderer.ts` | Canvas 2D rendering for the popover preview (one `drawXxx` function per style) |
+| `src/mapItems.ts` | OBR scene item creation/update; `LAYOUTS` config; `createMapBar` / `updateMapBar` |
+| `src/main.ts` | Popover UI (GM editor + player view); wires SDK events to renderer and map helpers |
+| `src/style.css` | Popover styles only — does not affect the map |
+| `public/manifest.json` | Owlbear extension manifest (name, icon, popover dimensions) |
+
+## Map Item Architecture (`mapItems.ts`)
+
+Each boss bar is **four OBR items** on the `PROP` layer:
+
+```
+bg (SHAPE, RECTANGLE)        ← drag handle; holds BossBarData in metadata[PLUGIN_ID]
+  ├── __hp_fill (SHAPE)      ← red HP rectangle; width scales with currentHP/maxHP
+  ├── __frame  (IMAGE)       ← authentic PNG overlay; centered at barCenter
+  └── __name   (TEXT)        ← boss name; positioned above the bar for all styles
+```
+
+All three children are attached to `bg` with `disableAttachmentBehavior(["SCALE", "ROTATION", "LOCKED", "COPY"])`.
+
+### `LAYOUTS` Record
+
+`LAYOUTS[GameStyle]` contains all per-style geometry in **native pixels** (the source image's coordinate space). The scale factor `s = BAR_W / layout.nativeW` converts native pixels to OBR scene units. Key fields:
+
+- `nativeW / nativeH` — source image dimensions
+- `fillX/Y/H/fillMaxW/fillOffset` — HP fill rectangle geometry
+- `nameAreaAbove / nameAreaBelow` — extra bg space reserved above/below the frame for the name
+- `nameTX / nameTY` — name text top-left **relative to bar top-left** in native pixels; **negative Y = above bar** (used by all styles)
+- `nameFontSize / nameFontFamily / nameColor` — text style in native pixels
+
+### Name Text Visibility
+
+The name text always uses a dark stroke (`strokeColor: "#000000", strokeOpacity: 0.65, strokeWidth: ~6% of fontSize`) so it is readable on the light beige map background (`#ede2db`). All styles position the name **above** the bar frame (negative `nameTY`) to avoid z-order conflicts with the frame PNG.
+
+### Geometry Flow
+
+1. `computeGeometry(layout, health, barCX, barCY)` → all scene-unit positions
+2. `barCenterFromBgTL(bgTL, layout)` → recovers the frame center from the bg's stored top-left (used in `updateMapBar` to preserve position across style changes)
+
+## Adding a New Game Style
+
+1. Add the key to `GameStyle` in `types.ts`.
+2. Add a `StyleLayout` entry to `LAYOUTS` in `mapItems.ts`.
+3. Add a `drawXxx(ctx, canvas, data)` function in `renderer.ts` and add a `case` in `renderToCanvas`.
+4. Add PNG assets under `public/assets/<style>/` (server mode) and matching GitHub paths.
+5. Add the style option to the GM editor UI in `main.ts`.
+
+## OBR SDK Notes
+
+- All scene mutations go through `OBR.scene.items.addItems`, `updateItems`, `getItems`, `getItemAttachments`.
+- Positions are in **scene units** (not pixels). One grid cell = `sceneDpi` scene units (from `OBR.scene.grid.getDpi()`).
+- `BAR_W = 750` scene units = 5 grid cells at the default 150 dpi.
+- Text items use top-left positioning (same as shapes); image items use an anchor offset (`grid.offset`).
+- The extension manifest declares a single `action` popover at `/` with `height: 580, width: 500`.
