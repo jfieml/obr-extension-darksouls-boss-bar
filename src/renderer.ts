@@ -46,21 +46,26 @@ async function drawDS1(
   data: BossBarData,
 ) {
   const frame = await loadImage("/assets/ds1/boss_health_bar.png");
+  await document.fonts.ready;
 
-  const s          = canvas.width / frame.width;
-  const topPad     = 8;
-  // Dedicated name area above the frame, consistent with DS2/DS3/ER renderers
-  // and matching the map-item nameTY which is negative (above the bar).
-  const nameH      = Math.max(24, Math.round(32 * s));
-  const bottomPad  = 8;
-  const barH       = Math.round(frame.height * s);
-  canvas.height    = topPad + nameH + barH + bottomPad;
+  const s    = canvas.width / frame.width;
+  const barH = Math.round(frame.height * s);
+  const fs   = Math.max(13, Math.round(58 * s));
+
+  // The name baseline in canvas space sits at topPad + 42*s (native position
+  // inside the DS1 frame's decorative name band).  topPad must be large
+  // enough that the text ascenders (cap-height + half stroke) don't clip
+  // above y=0, with at least 4 px of breathing room.
+  const capHeight  = fs * 0.91;
+  const strokeHalf = Math.max(1, fs * 0.06);
+  const topPad     = Math.max(6, Math.ceil(4 + capHeight + strokeHalf - 42 * s));
+
+  canvas.height = topPad + barH;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const health = clamp01(data);
-  const frameY = topPad + nameH;
   const bx = Math.round(80 * s);
-  const by = frameY + Math.round(64 * s);
+  const by = topPad + Math.round(64 * s);
   const bw = Math.round(1335 * s);
   const bh = Math.round(25 * s);
 
@@ -75,18 +80,15 @@ async function drawDS1(
     ctx.fillRect(bx, by, bw * health, bh);
   }
 
-  ctx.drawImage(frame, 0, frameY, canvas.width, barH);
+  ctx.drawImage(frame, 0, topPad, canvas.width, barH);
 
-  await document.fonts.ready;
-  const fs = Math.max(13, Math.round(58 * s));
   ctx.font = `${fs}px Georgia, 'Times New Roman', serif`;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   ctx.strokeStyle = "rgba(0,0,0,0.65)";
   ctx.lineWidth = Math.max(1, fs * 0.12);
   const textX = Math.round(95 * s);
-  // Baseline sits 4 px above the frame top — text is fully in the name area.
-  const textY = frameY - 4;
+  const textY = topPad + Math.round(42 * s);
   ctx.strokeText(data.bossName, textX, textY);
   ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
   ctx.fillText(data.bossName, textX, textY);
