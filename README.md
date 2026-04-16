@@ -116,3 +116,9 @@ public/
 
 - [Vite](https://vitejs.dev/) + TypeScript
 - [Owlbear Rodeo SDK](https://docs.owlbear.rodeo/extensions) v3
+
+---
+
+## Credits
+
+The boss health bar frame images are sourced from the **[FromSoftware Image Macro Creator](https://rezuaq.be/new-area/image-creator/)** by [Rezuaq](https://github.com/Sibert-Aerts/sibert-aerts.github.io) — a fantastic fan-made tool for generating authentic FromSoft UI overlays. All game assets (Dark Souls, Dark Souls II, Dark Souls III, Elden Ring) remain the property of FromSoftware and their respective rights holders.
