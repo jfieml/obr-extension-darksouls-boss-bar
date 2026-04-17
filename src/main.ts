@@ -43,7 +43,11 @@ function escapeHtml(s: string): string {
 
 // ── Player popover ─────────────────────────────────────────────────────────
 
-async function mountPlayerUI(app: HTMLElement, bars: Item[]): Promise<void> {
+async function mountPlayerUI(
+  app: HTMLElement,
+  bars: Item[],
+  getOverlay?: (id: string) => DamageOverlay | undefined,
+): Promise<void> {
   app.classList.add("player-mode");
 
   if (bars.length === 0) {
@@ -65,7 +69,7 @@ async function mountPlayerUI(app: HTMLElement, bars: Item[]): Promise<void> {
     const canvas = document.getElementById(`pc-${i}`) as HTMLCanvasElement;
     if (!canvas) continue;
     canvas.width = canvas.parentElement?.clientWidth || 460;
-    await renderToCanvas(canvas, getBarData(bars[i]));
+    await renderToCanvas(canvas, getBarData(bars[i]), getOverlay?.(bars[i].id));
     totalHeight += canvas.height;
   }
 
@@ -418,16 +422,91 @@ OBR.onReady(async () => {
         }, 750);
       });
     } else {
-      await mountPlayerUI(app, bars.filter(b => b.visible !== false));
-      let latestPlayerItems: Item[] = [];
-      let playerRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+      // ── Player overlay state ────────────────────────────────────────────
+      // Tracks HP values from the last scene snapshot so drops can be detected.
+      const playerPrevHP = new Map<string, number>();
+
+      interface PlayerOverlayEntry {
+        prevRatio: number;
+        damageAmount: number;
+        expiresAt: number; // Date.now() + 5000
+      }
+      const playerOverlays = new Map<string, PlayerOverlayEntry>();
+      let playerFadeInterval: ReturnType<typeof setInterval> | null = null;
+      let latestPlayerBars: Item[] = [];
+
+      // Convert a live PlayerOverlayEntry into a DamageOverlay with current alpha.
+      function getPlayerOverlay(barId: string): DamageOverlay | undefined {
+        const ovl = playerOverlays.get(barId);
+        if (!ovl) return undefined;
+        const remaining = ovl.expiresAt - Date.now();
+        if (remaining <= 0) return undefined;
+        const alpha = remaining < 500 ? remaining / 500 : 1.0;
+        return { prevRatio: ovl.prevRatio, damageAmount: ovl.damageAmount, alpha };
+      }
+
+      // Re-render the canvas for each player bar without rebuilding the DOM.
+      async function rerenderPlayerCanvases(currentBars: Item[]): Promise<void> {
+        for (let i = 0; i < currentBars.length; i++) {
+          const canvas = document.getElementById(`pc-${i}`) as HTMLCanvasElement | null;
+          if (!canvas) continue;
+          canvas.width = canvas.parentElement?.clientWidth || 460;
+          await renderToCanvas(canvas, getBarData(currentBars[i]), getPlayerOverlay(currentBars[i].id));
+        }
+      }
+
+      // Seed prevHP so the very first damage after opening the popover is detected.
+      const visibleBars = bars.filter(b => b.visible !== false);
+      for (const bar of visibleBars) {
+        playerPrevHP.set(bar.id, getBarData(bar).currentHP);
+      }
+      latestPlayerBars = visibleBars;
+
+      await mountPlayerUI(app, visibleBars, getPlayerOverlay);
+
       unsubItems = OBR.scene.items.onChange((items: Item[]) => {
-        latestPlayerItems = items;
-        if (playerRebuildTimer) clearTimeout(playerRebuildTimer);
-        playerRebuildTimer = setTimeout(() => {
-          playerRebuildTimer = null;
-          mountPlayerUI(app, latestPlayerItems.filter(isBossBar).filter(b => b.visible !== false));
-        }, 750);
+        const bossBars = items.filter(isBossBar).filter(b => b.visible !== false);
+        latestPlayerBars = bossBars;
+
+        // Detect HP drops and create/refresh overlays.
+        for (const bar of bossBars) {
+          const data = getBarData(bar);
+          const prevHP = playerPrevHP.get(bar.id);
+          if (prevHP !== undefined && data.currentHP < prevHP && data.maxHP > 0) {
+            const existing = playerOverlays.get(bar.id);
+            playerOverlays.set(bar.id, {
+              prevRatio: Math.max(prevHP / data.maxHP, existing?.prevRatio ?? 0),
+              damageAmount: (existing?.damageAmount ?? 0) + (prevHP - data.currentHP),
+              expiresAt: Date.now() + 5000,
+            });
+          }
+          playerPrevHP.set(bar.id, data.currentHP);
+        }
+
+        // Remove overlays for bars that no longer exist.
+        for (const id of [...playerOverlays.keys()]) {
+          if (!bossBars.find(b => b.id === id)) playerOverlays.delete(id);
+        }
+
+        // Rebuild the full player UI (handles bar list / height changes).
+        mountPlayerUI(app, bossBars, getPlayerOverlay);
+
+        // Start the overlay fade interval if not already running.
+        if (playerOverlays.size > 0 && !playerFadeInterval) {
+          playerFadeInterval = setInterval(() => {
+            const now = Date.now();
+            for (const [id, ovl] of [...playerOverlays.entries()]) {
+              if (ovl.expiresAt <= now) playerOverlays.delete(id);
+            }
+            if (playerOverlays.size === 0) {
+              clearInterval(playerFadeInterval!);
+              playerFadeInterval = null;
+              rerenderPlayerCanvases(latestPlayerBars);
+              return;
+            }
+            rerenderPlayerCanvases(latestPlayerBars);
+          }, 50);
+        }
       });
     }
   };

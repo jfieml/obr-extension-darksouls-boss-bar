@@ -62,7 +62,7 @@ async function drawDS1(
   canvas: HTMLCanvasElement,
   data: BossBarData,
   overlay?: DamageOverlay,
-) {
+): Promise<number> {
   const frame = await loadImage(assetUrl("ds1", "boss_health_bar.png"));
   await document.fonts.ready;
 
@@ -119,6 +119,9 @@ async function drawDS1(
   ctx.strokeText(data.bossName, textX, textY);
   ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
   ctx.fillText(data.bossName, textX, textY);
+
+  // Return the Y anchor for the damage number: same baseline as the boss name
+  return textY;
 }
 
 // ── DS2 ───────────────────────────────────────────────────────────────────
@@ -129,7 +132,7 @@ async function drawDS2(
   canvas: HTMLCanvasElement,
   data: BossBarData,
   overlay?: DamageOverlay,
-) {
+): Promise<number> {
   const [frame, yellow, red] = await loadAll([
     assetUrl("ds2", "boss_health_frame.png"),
     assetUrl("ds2", "boss_health_yellow.png"),
@@ -175,6 +178,9 @@ async function drawDS2(
   ctx.strokeText(data.bossName, sidePad + 4, topPad + nameH - 4);
   ctx.fillStyle = "rgba(255, 255, 255, 0.92)";
   ctx.fillText(data.bossName, sidePad + 4, topPad + nameH - 4);
+
+  // Return bar top Y so the damage number anchors just above the bar
+  return topPad + nameH;
 }
 
 // ── DS3 ───────────────────────────────────────────────────────────────────
@@ -185,7 +191,7 @@ async function drawDS3(
   canvas: HTMLCanvasElement,
   data: BossBarData,
   overlay?: DamageOverlay,
-) {
+): Promise<number> {
   const [frame, yellow, red] = await loadAll([
     assetUrl("ds3", "boss_health_frame.png"),
     assetUrl("ds3", "boss_health_yellow.png"),
@@ -235,6 +241,8 @@ async function drawDS3(
   ctx.shadowBlur = 0;
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 0;
+
+  return topPad + nameH;
 }
 
 // ── Elden Ring ─────────────────────────────────────────────────────────────
@@ -245,7 +253,7 @@ async function drawEldenRing(
   canvas: HTMLCanvasElement,
   data: BossBarData,
   overlay?: DamageOverlay,
-) {
+): Promise<number> {
   const [base, frame, yellow, red, tip] = await loadAll([
     assetUrl("eldenring", "boss_health_base.png"),
     assetUrl("eldenring", "boss_health_frame.png"),
@@ -300,6 +308,8 @@ async function drawEldenRing(
   ctx.strokeText(data.bossName, sidePad + 4, topPad + nameH - 4);
   ctx.fillStyle = "rgba(255, 255, 255, 0.95)";
   ctx.fillText(data.bossName, sidePad + 4, topPad + nameH - 4);
+
+  return topPad + nameH;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -310,26 +320,30 @@ function clamp01(data: BossBarData): number {
 }
 
 /**
- * Draw the "-N" damage number in the top-right corner of the canvas.
+ * Draw the damage number just above the bar's top edge on the right side.
+ * `barTopY` is the Y coordinate of the bar top (returned by each draw function).
  * Called after the style-specific draw so it always sits on top.
  */
 function drawDamageNumber(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   overlay: DamageOverlay,
+  barTopY: number,
 ): void {
   ctx.save();
   ctx.globalAlpha = overlay.alpha;
   const text = `${Math.round(overlay.damageAmount)}`;
   const fs   = Math.max(11, Math.round(canvas.width * 0.038));
-  ctx.font      = `bold ${fs}px Georgia, 'Times New Roman', serif`;
+  ctx.font         = `bold ${fs}px Georgia, 'Times New Roman', serif`;
   ctx.textAlign    = "right";
-  ctx.textBaseline = "top";
+  ctx.textBaseline = "bottom";
   ctx.lineJoin     = "round";
   ctx.strokeStyle  = "rgba(0,0,0,0.85)";
   ctx.lineWidth    = Math.max(1.5, fs * 0.16);
-  const tx = canvas.width - 8;
-  const ty = 4;
+  // Anchor horizontally near the right side of the fill area (not at absolute edge)
+  const tx = canvas.width - 20;
+  // Anchor vertically just above the bar's top edge
+  const ty = barTopY - 3;
   ctx.strokeText(text, tx, ty);
   ctx.fillStyle = "rgba(255,255,255,0.95)";
   ctx.fillText(text, tx, ty);
@@ -347,14 +361,15 @@ export async function renderToCanvas(
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   try {
+    let barTopY = 0;
     switch (data.gameStyle) {
-      case "ds1":       await drawDS1(ctx, canvas, data, overlay); break;
-      case "ds2":       await drawDS2(ctx, canvas, data, overlay); break;
-      case "ds3":       await drawDS3(ctx, canvas, data, overlay); break;
-      case "eldenring": await drawEldenRing(ctx, canvas, data, overlay); break;
+      case "ds1":       barTopY = await drawDS1(ctx, canvas, data, overlay); break;
+      case "ds2":       barTopY = await drawDS2(ctx, canvas, data, overlay); break;
+      case "ds3":       barTopY = await drawDS3(ctx, canvas, data, overlay); break;
+      case "eldenring": barTopY = await drawEldenRing(ctx, canvas, data, overlay); break;
     }
     if (overlay && overlay.damageAmount > 0 && overlay.alpha > 0) {
-      drawDamageNumber(ctx, canvas, overlay);
+      drawDamageNumber(ctx, canvas, overlay, barTopY);
     }
   } catch (err) {
     console.error("[Dark Souls Utility] Render error:", err);
