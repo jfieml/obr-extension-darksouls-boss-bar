@@ -301,6 +301,19 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     }, 75);
   }
 
+  // ── Helpers ────────────────────────────────────────────────────────────
+
+  /** Patch the bar-list row for `selected.id` without a full mountGMUI rebuild. */
+  function patchListItem(currentHP: number, maxHP: number, bossName: string): void {
+    const row = app.querySelector<HTMLElement>(`.bar-list-item[data-id="${selected.id}"]`);
+    if (!row) return;
+    const pct = maxHP > 0 ? Math.round(currentHP / maxHP * 100) : 0;
+    const hpSpan   = row.querySelector<HTMLSpanElement>(".bar-list-hp");
+    const nameSpan = row.querySelector<HTMLSpanElement>(".bar-list-name");
+    if (hpSpan)   hpSpan.textContent   = `${pct}%`;
+    if (nameSpan) nameSpan.textContent = bossName;
+  }
+
   // ── Controls ───────────────────────────────────────────────────────────
 
   const nameEl    = document.getElementById("boss-name")   as HTMLInputElement;
@@ -354,6 +367,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
       currentHP: newHP,
       maxHP:     Math.max(1, parseInt(maxHPEl.value) || 1),
     };
+    patchListItem(draft.currentHP, draft.maxHP, draft.bossName);
     animatePreviewTo(newHP, prevHP);
     lastGMHPUpdateTime = Date.now();
     await updateMapBar(selected.id, draft);
@@ -365,6 +379,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     const newHP   = Math.max(0, Math.min(draft.maxHP, prevHP + sign * amount));
     draft         = { ...draft, currentHP: newHP };
     curHPEl.value = String(newHP);
+    patchListItem(draft.currentHP, draft.maxHP, draft.bossName);
     animatePreviewTo(newHP, prevHP);
     lastGMHPUpdateTime = Date.now();
     await updateMapBar(selected.id, draft);
