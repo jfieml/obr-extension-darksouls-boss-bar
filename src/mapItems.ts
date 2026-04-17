@@ -191,6 +191,39 @@ function barCenterFromBgTL(bgTL: { x: number; y: number }, layout: StyleLayout, 
   };
 }
 
+// ── Animation state ────────────────────────────────────────────────────────
+
+/** Timer handle per bar ID for any in-progress fill tween. */
+const activeAnimations = new Map<string, ReturnType<typeof setInterval>>();
+
+/**
+ * Currently displayed (possibly mid-tween) HP per bar.
+ * Used as the `fromHP` start point when a new change interrupts a running animation.
+ */
+const animatedHP = new Map<string, number>();
+
+/** Update only the fill shape's geometry (width / height / position). */
+async function applyFillGeometry(
+  fillId: string,
+  layout: StyleLayout,
+  health: number,
+  barCenter: { x: number; y: number },
+  scale: number,
+): Promise<void> {
+  const { fillW, fillH, fillTLX, fillTLY } = computeGeometry(layout, health, barCenter.x, barCenter.y, scale);
+  await OBR.scene.items.updateItems(
+    (i: Item) => i.id === fillId,
+    (drafts) => {
+      for (const d of drafts) {
+        if (!isShape(d)) continue;
+        d.width    = fillW;
+        d.height   = fillH;
+        d.position = { x: fillTLX, y: fillTLY };
+      }
+    },
+  );
+}
+
 // ── Public helpers ─────────────────────────────────────────────────────────
 
 const DEFAULT_DATA: BossBarData = {
@@ -348,8 +381,16 @@ export async function createMapBar(data: BossBarData): Promise<string> {
  * Update an existing boss bar.
  * bg.position is the TOP-LEFT of the background shape.
  * barCenter is recovered from bg.position using the stored (old) layout.
+ *
+ * Pass `options.animate = true` to tween the HP fill from the currently
+ * displayed HP to `data.currentHP` over 600 ms (8 steps, ease-out quadratic).
+ * All other fields (bg, frame, name) update immediately regardless.
  */
-export async function updateMapBar(itemId: string, data: BossBarData): Promise<void> {
+export async function updateMapBar(
+  itemId: string,
+  data: BossBarData,
+  options?: { animate?: boolean },
+): Promise<void> {
   const [bgList, sceneDpi] = await Promise.all([
     OBR.scene.items.getItems((i: Item) => i.id === itemId),
     OBR.scene.grid.getDpi(),
@@ -364,19 +405,42 @@ export async function updateMapBar(itemId: string, data: BossBarData): Promise<v
   const barCenter  = barCenterFromBgTL(bgTL, oldLayout, oldScale);
 
   const layout = LAYOUTS[data.gameStyle];
-  const health = healthRatio(data);
   const scale  = data.scale ?? 1;
+
+  // Cancel any in-progress fill animation for this bar before proceeding.
+  const existingTimer = activeAnimations.get(itemId);
+  if (existingTimer !== undefined) {
+    clearInterval(existingTimer);
+    activeAnimations.delete(itemId);
+  }
+
+  const shouldAnimate = (options?.animate ?? false) && Boolean(await OBR.scene.items.getItemAttachments([itemId]).then(a => a.find(x => x.name === "__hp_fill")));
+
+  // When animating, start the fill from the last displayed HP (mid-tween position)
+  // so a rapid second click continues smoothly rather than jumping.
+  const fromHP = shouldAnimate
+    ? (animatedHP.get(itemId) ?? storedData.currentHP)
+    : data.currentHP;
+
+  // Geometry for the immediate (non-fill) updates uses the final target HP.
+  const health = healthRatio(data);
   const { fillW, fillH, fillTLX, fillTLY, bgW, bgH, bgTLX, bgTLY, nameTLX, nameTLY, nameFontScene, effectiveW } =
     computeGeometry(layout, health, barCenter.x, barCenter.y, scale);
 
-  const frameDpi   = layout.nativeW * sceneDpi / effectiveW;
+  const frameDpi    = layout.nativeW * sceneDpi / effectiveW;
   const attachments = await OBR.scene.items.getItemAttachments([itemId]);
-  const fillItem   = attachments.find(a => a.name === "__hp_fill");
-  const frameItem  = attachments.find(a => a.name === "__frame");
-  const nameItm    = attachments.find(a => a.name === "__name");
+  const fillItem    = attachments.find(a => a.name === "__hp_fill");
+  const frameItem   = attachments.find(a => a.name === "__frame");
+  const nameItm     = attachments.find(a => a.name === "__name");
 
   const fillZ  = layout.frameIsBackground ? 2 : 1;
   const frameZ = layout.frameIsBackground ? 1 : 2;
+
+  // Geometry for the fill's starting frame (fromHP) when animating.
+  const fromHealth    = healthRatio({ ...data, currentHP: fromHP });
+  const fromFillGeom  = shouldAnimate
+    ? computeGeometry(layout, fromHealth, barCenter.x, barCenter.y, scale)
+    : null;
 
   await Promise.all([
     // Update bg: metadata, name, dimensions, position
@@ -396,19 +460,25 @@ export async function updateMapBar(itemId: string, data: BossBarData): Promise<v
       },
     ),
 
-    // Update fill — also sets zIndex to fix stacking on legacy bars
+    // Update fill — if animating, snap to fromHP first; the tween handles the rest.
     fillItem
       ? OBR.scene.items.updateItems(
           (i: Item) => i.id === fillItem.id,
           (drafts) => {
             for (const d of drafts) {
               if (!isShape(d)) continue;
-              d.zIndex               = fillZ;
-              d.width                = fillW;
-              d.height               = fillH;
-              d.position             = { x: fillTLX, y: fillTLY };
-              d.style.fillColor      = layout.fillColor;
-              d.style.fillOpacity    = layout.fillOpacity ?? 1;
+              d.zIndex            = fillZ;
+              d.style.fillColor   = layout.fillColor;
+              d.style.fillOpacity = layout.fillOpacity ?? 1;
+              if (fromFillGeom) {
+                d.width    = fromFillGeom.fillW;
+                d.height   = fromFillGeom.fillH;
+                d.position = { x: fromFillGeom.fillTLX, y: fromFillGeom.fillTLY };
+              } else {
+                d.width    = fillW;
+                d.height   = fillH;
+                d.position = { x: fillTLX, y: fillTLY };
+              }
             }
           },
         )
@@ -456,4 +526,34 @@ export async function updateMapBar(itemId: string, data: BossBarData): Promise<v
         )
       : Promise.resolve(),
   ]);
+
+  // ── Fill tween ──────────────────────────────────────────────────────────
+  if (!shouldAnimate || !fillItem) return;
+
+  const toHP   = data.currentHP;
+  const fillId = fillItem.id;
+  const STEPS  = 8;
+  const INTERVAL_MS = 600 / STEPS; // 75 ms per step
+  let step = 0;
+
+  animatedHP.set(itemId, fromHP);
+
+  const timer = setInterval(async () => {
+    step++;
+    const t      = step / STEPS;
+    const eased  = 1 - (1 - t) ** 2; // ease-out quadratic
+    const interpHP = fromHP + (toHP - fromHP) * eased;
+    animatedHP.set(itemId, interpHP);
+
+    const interpHealth = healthRatio({ ...data, currentHP: interpHP });
+    await applyFillGeometry(fillId, layout, interpHealth, barCenter, scale);
+
+    if (step >= STEPS) {
+      clearInterval(timer);
+      activeAnimations.delete(itemId);
+      animatedHP.set(itemId, toHP);
+    }
+  }, INTERVAL_MS);
+
+  activeAnimations.set(itemId, timer);
 }

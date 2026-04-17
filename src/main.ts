@@ -212,6 +212,28 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     await renderToCanvas(canvas, draft);
   };
 
+  // ── Canvas preview animation ──────────────────────────────────────────
+  let previewDisplayedHP = data.currentHP;
+  let previewAnimTimer: ReturnType<typeof setInterval> | null = null;
+
+  function animatePreviewTo(targetHP: number): void {
+    if (previewAnimTimer) clearInterval(previewAnimTimer);
+    const fromHP = previewDisplayedHP;
+    let step = 0;
+    previewAnimTimer = setInterval(async () => {
+      step++;
+      const eased = 1 - (1 - step / 8) ** 2;
+      previewDisplayedHP = fromHP + (targetHP - fromHP) * eased;
+      canvas.width = wrap.clientWidth || 460;
+      await renderToCanvas(canvas, { ...draft, currentHP: previewDisplayedHP });
+      if (step >= 8) {
+        clearInterval(previewAnimTimer!);
+        previewAnimTimer = null;
+        previewDisplayedHP = targetHP;
+      }
+    }, 75);
+  }
+
   // ── Controls ───────────────────────────────────────────────────────────
 
   const nameEl    = document.getElementById("boss-name")   as HTMLInputElement;
@@ -255,13 +277,15 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
   });
 
   document.getElementById("btn-update")!.addEventListener("click", async () => {
+    const newHP = Math.max(0, parseInt(curHPEl.value) || 0);
     draft = {
       ...draft,
       bossName:  nameEl.value.trim() || "Boss",
-      currentHP: Math.max(0, parseInt(curHPEl.value) || 0),
+      currentHP: newHP,
       maxHP:     Math.max(1, parseInt(maxHPEl.value) || 1),
     };
-    await updateMapBar(selected.id, draft);
+    animatePreviewTo(newHP);
+    await updateMapBar(selected.id, draft, { animate: true });
   });
 
   const applyDelta = async (sign: 1 | -1) => {
@@ -269,8 +293,8 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     const newHP  = Math.max(0, Math.min(draft.maxHP, draft.currentHP + sign * amount));
     draft        = { ...draft, currentHP: newHP };
     curHPEl.value = String(newHP);
-    await refreshPreview();
-    await updateMapBar(selected.id, draft);
+    animatePreviewTo(newHP);
+    await updateMapBar(selected.id, draft, { animate: true });
   };
 
   document.getElementById("btn-damage")!.addEventListener("click", () => applyDelta(-1));
@@ -317,13 +341,27 @@ OBR.onReady(async () => {
     const bars = await OBR.scene.items.getItems<Item>(isBossBar);
     if (role === "GM") {
       await mountGMUI(app, bars);
-      unsubItems = OBR.scene.items.onChange(async (items: Item[]) => {
-        await mountGMUI(app, items.filter(isBossBar));
+      let latestGMItems: Item[] = [];
+      let gmRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+      unsubItems = OBR.scene.items.onChange((items: Item[]) => {
+        latestGMItems = items;
+        if (gmRebuildTimer) clearTimeout(gmRebuildTimer);
+        gmRebuildTimer = setTimeout(() => {
+          gmRebuildTimer = null;
+          mountGMUI(app, latestGMItems.filter(isBossBar));
+        }, 750);
       });
     } else {
       await mountPlayerUI(app, bars.filter(b => b.visible !== false));
-      unsubItems = OBR.scene.items.onChange(async (items: Item[]) => {
-        await mountPlayerUI(app, items.filter(isBossBar).filter(b => b.visible !== false));
+      let latestPlayerItems: Item[] = [];
+      let playerRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+      unsubItems = OBR.scene.items.onChange((items: Item[]) => {
+        latestPlayerItems = items;
+        if (playerRebuildTimer) clearTimeout(playerRebuildTimer);
+        playerRebuildTimer = setTimeout(() => {
+          playerRebuildTimer = null;
+          mountPlayerUI(app, latestPlayerItems.filter(isBossBar).filter(b => b.visible !== false));
+        }, 750);
       });
     }
   };
