@@ -3,10 +3,10 @@
   "version": "1.1.0",
   "manifest_version": 1,
   "description": "Display a Dark Souls-style boss health bar to all players",
-  "icon": "/icon.svg",
+  "icon": "/icon.png",
   "action": {
     "title": "Boss Health Bar",
-    "icon": "/icon.svg",
+    "icon": "/icon.png",
     "popover": "/",
     "height": 580,
     "width": 500
