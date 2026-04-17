@@ -340,8 +340,8 @@ function drawDamageNumber(
   ctx.lineJoin     = "round";
   ctx.strokeStyle  = "rgba(0,0,0,0.85)";
   ctx.lineWidth    = Math.max(1.5, fs * 0.16);
-  // Anchor horizontally near the right side of the fill area (not at absolute edge)
-  const tx = canvas.width - 20;
+  // Anchor horizontally well inside the right edge of the fill area
+  const tx = Math.round(canvas.width * 0.82);
   // Anchor vertically just above the bar's top edge
   const ty = barTopY - 3;
   ctx.strokeText(text, tx, ty);
