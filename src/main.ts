@@ -6,13 +6,21 @@ import {
   toggleBarVisibility,
   updateMapBar,
 } from "./mapItems";
-import { renderToCanvas } from "./renderer";
+import { renderToCanvas, type DamageOverlay } from "./renderer";
 import { type BossBarData } from "./types";
 import "./style.css";
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const MIN_PLAYER_HEIGHT = 80;
+
+/**
+ * Timestamp of the last GM-initiated HP change (damage / heal / update).
+ * The `onChange` → mountGMUI rebuild is suppressed for 6 s after this to
+ * prevent the UI from wiping the damage-overlay animation mid-flight.
+ * A manual rebuild is triggered when the overlay fade finishes.
+ */
+let lastGMHPUpdateTime = 0;
 
 const EYE_OPEN = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display:block" aria-hidden="true"><path d="M0.5 8 Q8 1.5 15.5 8 Q8 14.5 0.5 8Z"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/></svg>`;
 const EYE_SLASH = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display:block" aria-hidden="true"><path d="M0.5 8 Q8 1.5 15.5 8 Q8 14.5 0.5 8Z"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/><line x1="2.5" y1="2.5" x2="13.5" y2="13.5"/></svg>`;
@@ -35,7 +43,11 @@ function escapeHtml(s: string): string {
 
 // ── Player popover ─────────────────────────────────────────────────────────
 
-async function mountPlayerUI(app: HTMLElement, bars: Item[]): Promise<void> {
+async function mountPlayerUI(
+  app: HTMLElement,
+  bars: Item[],
+  getOverlay?: (id: string) => DamageOverlay | undefined,
+): Promise<void> {
   app.classList.add("player-mode");
 
   if (bars.length === 0) {
@@ -57,7 +69,7 @@ async function mountPlayerUI(app: HTMLElement, bars: Item[]): Promise<void> {
     const canvas = document.getElementById(`pc-${i}`) as HTMLCanvasElement;
     if (!canvas) continue;
     canvas.width = canvas.parentElement?.clientWidth || 460;
-    await renderToCanvas(canvas, getBarData(bars[i]));
+    await renderToCanvas(canvas, getBarData(bars[i]), getOverlay?.(bars[i].id));
     totalHeight += canvas.height;
   }
 
@@ -212,6 +224,96 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     await renderToCanvas(canvas, draft);
   };
 
+  // ── Canvas preview animation + damage overlay ─────────────────────────
+  let previewDisplayedHP = data.currentHP;
+  let previewAnimTimer: ReturnType<typeof setInterval> | null = null;
+  let damageOverlay: DamageOverlay | null = null;
+  let damageHoldTimer: ReturnType<typeof setTimeout> | null = null;
+  let damageFadeTimer: ReturnType<typeof setInterval> | null = null;
+
+  function clearDamageOverlay(): void {
+    if (damageHoldTimer) { clearTimeout(damageHoldTimer); damageHoldTimer = null; }
+    if (damageFadeTimer) { clearInterval(damageFadeTimer); damageFadeTimer = null; }
+    damageOverlay = null;
+  }
+
+  function scheduleDamageOverlayFade(): void {
+    if (damageHoldTimer) clearTimeout(damageHoldTimer);
+    if (damageFadeTimer) clearInterval(damageFadeTimer);
+    damageHoldTimer = setTimeout(() => {
+      damageHoldTimer = null;
+      const FADE_STEPS = 10;
+      let fadeStep = 0;
+      damageFadeTimer = setInterval(() => {
+        fadeStep++;
+        if (damageOverlay) damageOverlay = { ...damageOverlay, alpha: 1 - fadeStep / FADE_STEPS };
+        canvas.width = wrap.clientWidth || 460;
+        renderToCanvas(canvas, draft, damageOverlay ?? undefined);
+        if (fadeStep >= FADE_STEPS) {
+          clearInterval(damageFadeTimer!);
+          damageFadeTimer = null;
+          damageOverlay = null;
+          // Now that the overlay is gone, do the rebuild that was suppressed during
+          // the animation window so the GM list stays in sync with the scene.
+          OBR.scene.items.getItems<Item>(isBossBar).then(items => mountGMUI(app, items));
+        }
+      }, 50); // 10 steps × 50 ms = 500 ms fade
+    }, 4500); // 4.5 s hold before fade begins
+  }
+
+  function animatePreviewTo(targetHP: number, logicalFromHP?: number): void {
+    const animFromHP = previewDisplayedHP;
+    // Use the caller-supplied logical HP for overlay math so that rapid clicks
+    // during animation don't inflate the damage number with the mid-animation
+    // visual position.
+    const prevHP = logicalFromHP ?? previewDisplayedHP;
+    const isDamage = targetHP < prevHP && draft.maxHP > 0;
+
+    if (isDamage) {
+      // Accumulate damage: if an overlay is already showing, extend its prevRatio
+      // to the larger of the two (so rapid clicks don't shrink the yellow zone).
+      const newPrevRatio = prevHP / draft.maxHP;
+      const existingPrevRatio = damageOverlay?.prevRatio ?? 0;
+      damageOverlay = {
+        prevRatio: Math.max(newPrevRatio, existingPrevRatio),
+        damageAmount: (damageOverlay?.damageAmount ?? 0) + (prevHP - targetHP),
+        alpha: 1.0,
+      };
+      scheduleDamageOverlayFade();
+    } else {
+      clearDamageOverlay();
+    }
+
+    if (previewAnimTimer) clearInterval(previewAnimTimer);
+    const fromHP = animFromHP; // animation starts from the current visual position
+    let step = 0;
+    previewAnimTimer = setInterval(async () => {
+      step++;
+      const eased = 1 - (1 - step / 8) ** 2;
+      previewDisplayedHP = fromHP + (targetHP - fromHP) * eased;
+      canvas.width = wrap.clientWidth || 460;
+      await renderToCanvas(canvas, { ...draft, currentHP: previewDisplayedHP }, damageOverlay ?? undefined);
+      if (step >= 8) {
+        clearInterval(previewAnimTimer!);
+        previewAnimTimer = null;
+        previewDisplayedHP = targetHP;
+      }
+    }, 75);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────
+
+  /** Patch the bar-list row for `selected.id` without a full mountGMUI rebuild. */
+  function patchListItem(currentHP: number, maxHP: number, bossName: string): void {
+    const row = app.querySelector<HTMLElement>(`.bar-list-item[data-id="${selected.id}"]`);
+    if (!row) return;
+    const pct = maxHP > 0 ? Math.round(currentHP / maxHP * 100) : 0;
+    const hpSpan   = row.querySelector<HTMLSpanElement>(".bar-list-hp");
+    const nameSpan = row.querySelector<HTMLSpanElement>(".bar-list-name");
+    if (hpSpan)   hpSpan.textContent   = `${pct}%`;
+    if (nameSpan) nameSpan.textContent = bossName;
+  }
+
   // ── Controls ───────────────────────────────────────────────────────────
 
   const nameEl    = document.getElementById("boss-name")   as HTMLInputElement;
@@ -229,6 +331,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
 
   styleEl.addEventListener("change", async () => {
     draft = { ...draft, gameStyle: styleEl.value as BossBarData["gameStyle"] };
+    clearDamageOverlay();
     await refreshPreview();
     await updateMapBar(selected.id, draft);
   });
@@ -237,6 +340,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     const s = parseFloat(scaleEl.value) || 1;
     scaleDisp.textContent = `${s.toFixed(2)}×`;
     draft = { ...draft, scale: s };
+    clearDamageOverlay();
     refreshPreview();
   });
 
@@ -255,21 +359,29 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
   });
 
   document.getElementById("btn-update")!.addEventListener("click", async () => {
+    const prevHP = draft.currentHP;
+    const newHP = Math.max(0, parseInt(curHPEl.value) || 0);
     draft = {
       ...draft,
       bossName:  nameEl.value.trim() || "Boss",
-      currentHP: Math.max(0, parseInt(curHPEl.value) || 0),
+      currentHP: newHP,
       maxHP:     Math.max(1, parseInt(maxHPEl.value) || 1),
     };
+    patchListItem(draft.currentHP, draft.maxHP, draft.bossName);
+    animatePreviewTo(newHP, prevHP);
+    lastGMHPUpdateTime = Date.now();
     await updateMapBar(selected.id, draft);
   });
 
   const applyDelta = async (sign: 1 | -1) => {
-    const amount = Math.max(0, parseInt(dmgEl.value) || 0);
-    const newHP  = Math.max(0, Math.min(draft.maxHP, draft.currentHP + sign * amount));
-    draft        = { ...draft, currentHP: newHP };
+    const amount  = Math.max(0, parseInt(dmgEl.value) || 0);
+    const prevHP  = draft.currentHP; // capture before mutating draft
+    const newHP   = Math.max(0, Math.min(draft.maxHP, prevHP + sign * amount));
+    draft         = { ...draft, currentHP: newHP };
     curHPEl.value = String(newHP);
-    await refreshPreview();
+    patchListItem(draft.currentHP, draft.maxHP, draft.bossName);
+    animatePreviewTo(newHP, prevHP);
+    lastGMHPUpdateTime = Date.now();
     await updateMapBar(selected.id, draft);
   };
 
@@ -317,13 +429,105 @@ OBR.onReady(async () => {
     const bars = await OBR.scene.items.getItems<Item>(isBossBar);
     if (role === "GM") {
       await mountGMUI(app, bars);
-      unsubItems = OBR.scene.items.onChange(async (items: Item[]) => {
-        await mountGMUI(app, items.filter(isBossBar));
+      let latestGMItems: Item[] = [];
+      let gmRebuildTimer: ReturnType<typeof setTimeout> | null = null;
+      unsubItems = OBR.scene.items.onChange((items: Item[]) => {
+        latestGMItems = items;
+        // Suppress the rebuild while the damage overlay is live (up to 6 s after
+        // the last GM HP change). A rebuild is scheduled when the overlay fades out.
+        if (Date.now() - lastGMHPUpdateTime < 6000) return;
+        if (gmRebuildTimer) clearTimeout(gmRebuildTimer);
+        gmRebuildTimer = setTimeout(() => {
+          gmRebuildTimer = null;
+          mountGMUI(app, latestGMItems.filter(isBossBar));
+        }, 750);
       });
     } else {
-      await mountPlayerUI(app, bars.filter(b => b.visible !== false));
-      unsubItems = OBR.scene.items.onChange(async (items: Item[]) => {
-        await mountPlayerUI(app, items.filter(isBossBar).filter(b => b.visible !== false));
+      // ── Player overlay state ────────────────────────────────────────────
+      // Tracks HP values from the last scene snapshot so drops can be detected.
+      const playerPrevHP = new Map<string, number>();
+
+      interface PlayerOverlayEntry {
+        prevRatio: number;
+        damageAmount: number;
+        expiresAt: number; // Date.now() + 5000
+      }
+      const playerOverlays = new Map<string, PlayerOverlayEntry>();
+      let playerFadeInterval: ReturnType<typeof setInterval> | null = null;
+      let latestPlayerBars: Item[] = [];
+
+      // Convert a live PlayerOverlayEntry into a DamageOverlay with current alpha.
+      function getPlayerOverlay(barId: string): DamageOverlay | undefined {
+        const ovl = playerOverlays.get(barId);
+        if (!ovl) return undefined;
+        const remaining = ovl.expiresAt - Date.now();
+        if (remaining <= 0) return undefined;
+        const alpha = remaining < 500 ? remaining / 500 : 1.0;
+        return { prevRatio: ovl.prevRatio, damageAmount: ovl.damageAmount, alpha };
+      }
+
+      // Re-render the canvas for each player bar without rebuilding the DOM.
+      async function rerenderPlayerCanvases(currentBars: Item[]): Promise<void> {
+        for (let i = 0; i < currentBars.length; i++) {
+          const canvas = document.getElementById(`pc-${i}`) as HTMLCanvasElement | null;
+          if (!canvas) continue;
+          canvas.width = canvas.parentElement?.clientWidth || 460;
+          await renderToCanvas(canvas, getBarData(currentBars[i]), getPlayerOverlay(currentBars[i].id));
+        }
+      }
+
+      // Seed prevHP so the very first damage after opening the popover is detected.
+      const visibleBars = bars.filter(b => b.visible !== false);
+      for (const bar of visibleBars) {
+        playerPrevHP.set(bar.id, getBarData(bar).currentHP);
+      }
+      latestPlayerBars = visibleBars;
+
+      await mountPlayerUI(app, visibleBars, getPlayerOverlay);
+
+      unsubItems = OBR.scene.items.onChange((items: Item[]) => {
+        const bossBars = items.filter(isBossBar).filter(b => b.visible !== false);
+        latestPlayerBars = bossBars;
+
+        // Detect HP drops and create/refresh overlays.
+        for (const bar of bossBars) {
+          const data = getBarData(bar);
+          const prevHP = playerPrevHP.get(bar.id);
+          if (prevHP !== undefined && data.currentHP < prevHP && data.maxHP > 0) {
+            const existing = playerOverlays.get(bar.id);
+            playerOverlays.set(bar.id, {
+              prevRatio: Math.max(prevHP / data.maxHP, existing?.prevRatio ?? 0),
+              damageAmount: (existing?.damageAmount ?? 0) + (prevHP - data.currentHP),
+              expiresAt: Date.now() + 5000,
+            });
+          }
+          playerPrevHP.set(bar.id, data.currentHP);
+        }
+
+        // Remove overlays for bars that no longer exist.
+        for (const id of [...playerOverlays.keys()]) {
+          if (!bossBars.find(b => b.id === id)) playerOverlays.delete(id);
+        }
+
+        // Rebuild the full player UI (handles bar list / height changes).
+        mountPlayerUI(app, bossBars, getPlayerOverlay);
+
+        // Start the overlay fade interval if not already running.
+        if (playerOverlays.size > 0 && !playerFadeInterval) {
+          playerFadeInterval = setInterval(() => {
+            const now = Date.now();
+            for (const [id, ovl] of [...playerOverlays.entries()]) {
+              if (ovl.expiresAt <= now) playerOverlays.delete(id);
+            }
+            if (playerOverlays.size === 0) {
+              clearInterval(playerFadeInterval!);
+              playerFadeInterval = null;
+              rerenderPlayerCanvases(latestPlayerBars);
+              return;
+            }
+            rerenderPlayerCanvases(latestPlayerBars);
+          }, 50);
+        }
       });
     }
   };
