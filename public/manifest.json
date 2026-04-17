@@ -1,6 +1,6 @@
 {
   "name": "Dark Souls Utility",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "manifest_version": 1,
   "description": "Display a Dark Souls-style boss health bar to all players",
   "icon": "/icon.svg",
