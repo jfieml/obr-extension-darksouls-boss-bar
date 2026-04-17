@@ -305,7 +305,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
 
   /** Patch the bar-list row for `selected.id` without a full mountGMUI rebuild. */
   function patchListItem(currentHP: number, maxHP: number, bossName: string): void {
-    const row = app.querySelector<HTMLElement>(`.bar-list-item[data-id="${selected.id}"]`);
+    const row = app.querySelector<HTMLElement>(`.bar-list-item[data-id="${selected!.id}"]`);
     if (!row) return;
     const pct = maxHP > 0 ? Math.round(currentHP / maxHP * 100) : 0;
     const hpSpan   = row.querySelector<HTMLSpanElement>(".bar-list-hp");
