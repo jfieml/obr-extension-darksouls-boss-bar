@@ -103,9 +103,8 @@ async function drawDS2(
   canvas: HTMLCanvasElement,
   data: BossBarData,
 ) {
-  const [frame, yellow, red] = await loadAll([
+  const [frame, red] = await loadAll([
     assetUrl("ds2", "boss_health_frame.png"),
-    assetUrl("ds2", "boss_health_yellow.png"),
     assetUrl("ds2", "boss_health_red.png"),
   ]);
 
@@ -120,14 +119,15 @@ async function drawDS2(
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const health = clamp01(data);
-  const ix = sidePad + Math.round(14 * s);
-  const iw = Math.round(664 * s);
+  // Fill area inside the frame: native fillX=14, fillY=9, fillH=9, fillMaxW=664
+  const ix    = sidePad + Math.round(14 * s);
+  const iw    = Math.round(664 * s);
+  const fillY = topPad + nameH + Math.round(9 * s);
+  const fillH = Math.max(1, Math.round(9 * s));
 
-  // Frame is the background track (frameIsBackground = true): draw first,
-  // then layer yellow and red fills on top — matching the map-item z-order.
+  // Frame is the background track; red fill sits in the inner fill channel only.
   ctx.drawImage(frame, sidePad, topPad + nameH, drawW, barH);
-  drawClipped(ctx, yellow, ix, topPad + nameH, iw, barH, iw);
-  drawClipped(ctx, red,    ix, topPad + nameH, iw, barH, Math.round(iw * health));
+  drawClipped(ctx, red, ix, fillY, iw, fillH, Math.round(iw * health));
 
   await document.fonts.ready;
   const fs = Math.max(13, Math.round(30 * s));
