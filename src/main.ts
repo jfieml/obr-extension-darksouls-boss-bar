@@ -285,7 +285,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
       maxHP:     Math.max(1, parseInt(maxHPEl.value) || 1),
     };
     animatePreviewTo(newHP);
-    await updateMapBar(selected.id, draft, { animate: true });
+    await updateMapBar(selected.id, draft);
   });
 
   const applyDelta = async (sign: 1 | -1) => {
@@ -294,7 +294,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     draft        = { ...draft, currentHP: newHP };
     curHPEl.value = String(newHP);
     animatePreviewTo(newHP);
-    await updateMapBar(selected.id, draft, { animate: true });
+    await updateMapBar(selected.id, draft);
   };
 
   document.getElementById("btn-damage")!.addEventListener("click", () => applyDelta(-1));
