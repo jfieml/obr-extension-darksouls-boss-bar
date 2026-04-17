@@ -1,6 +1,22 @@
 import { assetUrl } from "./assetBase";
 import { type BossBarData } from "./types";
 
+// ── Damage overlay ─────────────────────────────────────────────────────────
+
+/**
+ * Optional overlay data for the damage-chip animation.
+ * When provided, a yellow bar is drawn from the current HP edge to `prevRatio`,
+ * and a damage number is rendered in the top-right corner.
+ */
+export interface DamageOverlay {
+  /** Health ratio (0–1) before the damage was dealt. */
+  prevRatio: number;
+  /** Raw HP lost (positive number), shown as "−N" in the corner. */
+  damageAmount: number;
+  /** Fade factor 0–1 (0 = invisible, 1 = fully opaque). */
+  alpha: number;
+}
+
 // ── Image cache ────────────────────────────────────────────────────────────
 
 const imageCache = new Map<string, HTMLImageElement>();
@@ -45,6 +61,7 @@ async function drawDS1(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   data: BossBarData,
+  overlay?: DamageOverlay,
 ) {
   const frame = await loadImage(assetUrl("ds1", "boss_health_bar.png"));
   await document.fonts.ready;
@@ -72,6 +89,15 @@ async function drawDS1(
 
   ctx.fillStyle = "#0d0800";
   ctx.fillRect(bx, by, bw, bh);
+
+  // Yellow damage zone drawn before red so red sits on top of it.
+  if (overlay && overlay.prevRatio > health && overlay.alpha > 0) {
+    ctx.save();
+    ctx.globalAlpha = overlay.alpha;
+    ctx.fillStyle = "#b87828";
+    ctx.fillRect(bx + bw * health, by, Math.max(0, bw * (overlay.prevRatio - health)), bh);
+    ctx.restore();
+  }
 
   if (health > 0) {
     const g = ctx.createLinearGradient(bx, by, bx, by + bh);
@@ -102,9 +128,11 @@ async function drawDS2(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   data: BossBarData,
+  overlay?: DamageOverlay,
 ) {
-  const [frame, red] = await loadAll([
+  const [frame, yellow, red] = await loadAll([
     assetUrl("ds2", "boss_health_frame.png"),
+    assetUrl("ds2", "boss_health_yellow.png"),
     assetUrl("ds2", "boss_health_red.png"),
   ]);
 
@@ -125,8 +153,16 @@ async function drawDS2(
   const fillY = topPad + nameH + Math.round(9 * s);
   const fillH = Math.max(1, Math.round(9 * s));
 
-  // Frame is the background track; red fill sits in the inner fill channel only.
+  // Frame is the background track.
   ctx.drawImage(frame, sidePad, topPad + nameH, drawW, barH);
+
+  // Yellow damage zone drawn first so red sits on top.
+  if (overlay && overlay.prevRatio > 0 && overlay.alpha > 0) {
+    ctx.save();
+    ctx.globalAlpha = overlay.alpha;
+    drawClipped(ctx, yellow, ix, fillY, iw, fillH, Math.round(iw * overlay.prevRatio));
+    ctx.restore();
+  }
   drawClipped(ctx, red, ix, fillY, iw, fillH, Math.round(iw * health));
 
   await document.fonts.ready;
@@ -148,9 +184,11 @@ async function drawDS3(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   data: BossBarData,
+  overlay?: DamageOverlay,
 ) {
-  const [frame, red] = await loadAll([
+  const [frame, yellow, red] = await loadAll([
     assetUrl("ds3", "boss_health_frame.png"),
+    assetUrl("ds3", "boss_health_yellow.png"),
     assetUrl("ds3", "boss_health_red.png"),
   ]);
 
@@ -167,14 +205,19 @@ async function drawDS3(
   const health = clamp01(data);
   const fillPx = health > 0 ? (7 + 1002 * health) / frame.width * drawW : 0;
 
-  // Frame is the dark track background; red fill is semi-transparent on top
-  // so the track texture remains visible through the vibrant red.
+  // Frame is the dark track background; fills are drawn on top.
   ctx.drawImage(frame, sidePad, topPad + nameH, drawW, barH);
-  if (health > 0) {
+
+  // Yellow damage zone drawn first so red sits on top.
+  if (overlay && overlay.prevRatio > 0 && overlay.alpha > 0) {
+    const prevFillPx = (7 + 1002 * overlay.prevRatio) / frame.width * drawW;
     ctx.save();
-    ctx.globalAlpha = 1;
-    drawClipped(ctx, red, sidePad, topPad + nameH, drawW, barH, fillPx);
+    ctx.globalAlpha = overlay.alpha;
+    drawClipped(ctx, yellow, sidePad, topPad + nameH, drawW, barH, prevFillPx);
     ctx.restore();
+  }
+  if (health > 0) {
+    drawClipped(ctx, red, sidePad, topPad + nameH, drawW, barH, fillPx);
   }
 
   await document.fonts.ready;
@@ -201,6 +244,7 @@ async function drawEldenRing(
   ctx: CanvasRenderingContext2D,
   canvas: HTMLCanvasElement,
   data: BossBarData,
+  overlay?: DamageOverlay,
 ) {
   const [base, frame, yellow, red, tip] = await loadAll([
     assetUrl("eldenring", "boss_health_base.png"),
@@ -222,10 +266,20 @@ async function drawEldenRing(
 
   const health = clamp01(data);
   const fillPx = health > 0 ? (50 + 1998 * health) / base.width * drawW : 0;
+  // Yellow extends to the pre-damage HP when an overlay is active.
+  const yellowFillPx = (overlay && overlay.prevRatio > 0 && overlay.alpha > 0)
+    ? (50 + 1998 * overlay.prevRatio) / base.width * drawW
+    : fillPx;
 
   ctx.drawImage(base, sidePad, topPad + nameH, drawW, barH);
-  drawClipped(ctx, yellow, sidePad, topPad + nameH, drawW, barH, fillPx);
-  drawClipped(ctx, red,    sidePad, topPad + nameH, drawW, barH, fillPx);
+
+  if (overlay && overlay.alpha > 0 && yellowFillPx > fillPx) {
+    ctx.save();
+    ctx.globalAlpha = overlay.alpha;
+    drawClipped(ctx, yellow, sidePad, topPad + nameH, drawW, barH, yellowFillPx);
+    ctx.restore();
+  }
+  drawClipped(ctx, red, sidePad, topPad + nameH, drawW, barH, fillPx);
 
   if (health > 0) {
     const tipW = (tip.width  / base.width)  * drawW;
@@ -255,21 +309,52 @@ function clamp01(data: BossBarData): number {
   return Math.max(0, Math.min(1, data.currentHP / data.maxHP));
 }
 
+/**
+ * Draw the "-N" damage number in the top-right corner of the canvas.
+ * Called after the style-specific draw so it always sits on top.
+ */
+function drawDamageNumber(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  overlay: DamageOverlay,
+): void {
+  ctx.save();
+  ctx.globalAlpha = overlay.alpha;
+  const text = `−${Math.round(overlay.damageAmount)}`;
+  const fs   = Math.max(11, Math.round(canvas.width * 0.038));
+  ctx.font      = `bold ${fs}px Georgia, 'Times New Roman', serif`;
+  ctx.textAlign    = "right";
+  ctx.textBaseline = "top";
+  ctx.lineJoin     = "round";
+  ctx.strokeStyle  = "rgba(0,0,0,0.85)";
+  ctx.lineWidth    = Math.max(1.5, fs * 0.16);
+  const tx = canvas.width - 8;
+  const ty = 4;
+  ctx.strokeText(text, tx, ty);
+  ctx.fillStyle = "#f5d020";
+  ctx.fillText(text, tx, ty);
+  ctx.restore();
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 /** Render into an existing canvas element (used for the GM preview). */
 export async function renderToCanvas(
   canvas: HTMLCanvasElement,
   data: BossBarData,
+  overlay?: DamageOverlay,
 ): Promise<void> {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   try {
     switch (data.gameStyle) {
-      case "ds1":       return await drawDS1(ctx, canvas, data);
-      case "ds2":       return await drawDS2(ctx, canvas, data);
-      case "ds3":       return await drawDS3(ctx, canvas, data);
-      case "eldenring": return await drawEldenRing(ctx, canvas, data);
+      case "ds1":       await drawDS1(ctx, canvas, data, overlay); break;
+      case "ds2":       await drawDS2(ctx, canvas, data, overlay); break;
+      case "ds3":       await drawDS3(ctx, canvas, data, overlay); break;
+      case "eldenring": await drawEldenRing(ctx, canvas, data, overlay); break;
+    }
+    if (overlay && overlay.damageAmount > 0 && overlay.alpha > 0) {
+      drawDamageNumber(ctx, canvas, overlay);
     }
   } catch (err) {
     console.error("[Dark Souls Utility] Render error:", err);

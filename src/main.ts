@@ -6,7 +6,7 @@ import {
   toggleBarVisibility,
   updateMapBar,
 } from "./mapItems";
-import { renderToCanvas } from "./renderer";
+import { renderToCanvas, type DamageOverlay } from "./renderer";
 import { type BossBarData } from "./types";
 import "./style.css";
 
@@ -212,20 +212,68 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     await renderToCanvas(canvas, draft);
   };
 
-  // ── Canvas preview animation ──────────────────────────────────────────
+  // ── Canvas preview animation + damage overlay ─────────────────────────
   let previewDisplayedHP = data.currentHP;
   let previewAnimTimer: ReturnType<typeof setInterval> | null = null;
+  let damageOverlay: DamageOverlay | null = null;
+  let damageHoldTimer: ReturnType<typeof setTimeout> | null = null;
+  let damageFadeTimer: ReturnType<typeof setInterval> | null = null;
+
+  function clearDamageOverlay(): void {
+    if (damageHoldTimer) { clearTimeout(damageHoldTimer); damageHoldTimer = null; }
+    if (damageFadeTimer) { clearInterval(damageFadeTimer); damageFadeTimer = null; }
+    damageOverlay = null;
+  }
+
+  function scheduleDamageOverlayFade(): void {
+    if (damageHoldTimer) clearTimeout(damageHoldTimer);
+    if (damageFadeTimer) clearInterval(damageFadeTimer);
+    damageHoldTimer = setTimeout(() => {
+      damageHoldTimer = null;
+      const FADE_STEPS = 10;
+      let fadeStep = 0;
+      damageFadeTimer = setInterval(() => {
+        fadeStep++;
+        if (damageOverlay) damageOverlay = { ...damageOverlay, alpha: 1 - fadeStep / FADE_STEPS };
+        canvas.width = wrap.clientWidth || 460;
+        renderToCanvas(canvas, draft, damageOverlay ?? undefined);
+        if (fadeStep >= FADE_STEPS) {
+          clearInterval(damageFadeTimer!);
+          damageFadeTimer = null;
+          damageOverlay = null;
+        }
+      }, 50); // 10 steps × 50 ms = 500 ms fade
+    }, 4500); // 4.5 s hold before fade begins
+  }
 
   function animatePreviewTo(targetHP: number): void {
+    const prevHP = previewDisplayedHP;
+    const isDamage = targetHP < prevHP && draft.maxHP > 0;
+
+    if (isDamage) {
+      // Accumulate damage: if an overlay is already showing, extend its prevRatio
+      // to the larger of the two (so rapid clicks don't shrink the yellow zone).
+      const newPrevRatio = prevHP / draft.maxHP;
+      const existingPrevRatio = damageOverlay?.prevRatio ?? 0;
+      damageOverlay = {
+        prevRatio: Math.max(newPrevRatio, existingPrevRatio),
+        damageAmount: (damageOverlay?.damageAmount ?? 0) + (prevHP - targetHP),
+        alpha: 1.0,
+      };
+      scheduleDamageOverlayFade();
+    } else {
+      clearDamageOverlay();
+    }
+
     if (previewAnimTimer) clearInterval(previewAnimTimer);
-    const fromHP = previewDisplayedHP;
+    const fromHP = prevHP;
     let step = 0;
     previewAnimTimer = setInterval(async () => {
       step++;
       const eased = 1 - (1 - step / 8) ** 2;
       previewDisplayedHP = fromHP + (targetHP - fromHP) * eased;
       canvas.width = wrap.clientWidth || 460;
-      await renderToCanvas(canvas, { ...draft, currentHP: previewDisplayedHP });
+      await renderToCanvas(canvas, { ...draft, currentHP: previewDisplayedHP }, damageOverlay ?? undefined);
       if (step >= 8) {
         clearInterval(previewAnimTimer!);
         previewAnimTimer = null;
@@ -251,6 +299,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
 
   styleEl.addEventListener("change", async () => {
     draft = { ...draft, gameStyle: styleEl.value as BossBarData["gameStyle"] };
+    clearDamageOverlay();
     await refreshPreview();
     await updateMapBar(selected.id, draft);
   });
@@ -259,6 +308,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     const s = parseFloat(scaleEl.value) || 1;
     scaleDisp.textContent = `${s.toFixed(2)}×`;
     draft = { ...draft, scale: s };
+    clearDamageOverlay();
     refreshPreview();
   });
 
