@@ -261,8 +261,12 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     }, 4500); // 4.5 s hold before fade begins
   }
 
-  function animatePreviewTo(targetHP: number): void {
-    const prevHP = previewDisplayedHP;
+  function animatePreviewTo(targetHP: number, logicalFromHP?: number): void {
+    const animFromHP = previewDisplayedHP;
+    // Use the caller-supplied logical HP for overlay math so that rapid clicks
+    // during animation don't inflate the damage number with the mid-animation
+    // visual position.
+    const prevHP = logicalFromHP ?? previewDisplayedHP;
     const isDamage = targetHP < prevHP && draft.maxHP > 0;
 
     if (isDamage) {
@@ -281,7 +285,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     }
 
     if (previewAnimTimer) clearInterval(previewAnimTimer);
-    const fromHP = prevHP;
+    const fromHP = animFromHP; // animation starts from the current visual position
     let step = 0;
     previewAnimTimer = setInterval(async () => {
       step++;
@@ -342,6 +346,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
   });
 
   document.getElementById("btn-update")!.addEventListener("click", async () => {
+    const prevHP = draft.currentHP;
     const newHP = Math.max(0, parseInt(curHPEl.value) || 0);
     draft = {
       ...draft,
@@ -349,17 +354,18 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
       currentHP: newHP,
       maxHP:     Math.max(1, parseInt(maxHPEl.value) || 1),
     };
-    animatePreviewTo(newHP);
+    animatePreviewTo(newHP, prevHP);
     lastGMHPUpdateTime = Date.now();
     await updateMapBar(selected.id, draft);
   });
 
   const applyDelta = async (sign: 1 | -1) => {
-    const amount = Math.max(0, parseInt(dmgEl.value) || 0);
-    const newHP  = Math.max(0, Math.min(draft.maxHP, draft.currentHP + sign * amount));
-    draft        = { ...draft, currentHP: newHP };
+    const amount  = Math.max(0, parseInt(dmgEl.value) || 0);
+    const prevHP  = draft.currentHP; // capture before mutating draft
+    const newHP   = Math.max(0, Math.min(draft.maxHP, prevHP + sign * amount));
+    draft         = { ...draft, currentHP: newHP };
     curHPEl.value = String(newHP);
-    animatePreviewTo(newHP);
+    animatePreviewTo(newHP, prevHP);
     lastGMHPUpdateTime = Date.now();
     await updateMapBar(selected.id, draft);
   };
