@@ -320,7 +320,7 @@ function drawDamageNumber(
 ): void {
   ctx.save();
   ctx.globalAlpha = overlay.alpha;
-  const text = `−${Math.round(overlay.damageAmount)}`;
+  const text = `${Math.round(overlay.damageAmount)}`;
   const fs   = Math.max(11, Math.round(canvas.width * 0.038));
   ctx.font      = `bold ${fs}px Georgia, 'Times New Roman', serif`;
   ctx.textAlign    = "right";
@@ -331,7 +331,7 @@ function drawDamageNumber(
   const tx = canvas.width - 8;
   const ty = 4;
   ctx.strokeText(text, tx, ty);
-  ctx.fillStyle = "#f5d020";
+  ctx.fillStyle = "rgba(255,255,255,0.95)";
   ctx.fillText(text, tx, ty);
   ctx.restore();
 }

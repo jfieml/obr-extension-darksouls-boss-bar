@@ -14,6 +14,14 @@ import "./style.css";
 
 const MIN_PLAYER_HEIGHT = 80;
 
+/**
+ * Timestamp of the last GM-initiated HP change (damage / heal / update).
+ * The `onChange` → mountGMUI rebuild is suppressed for 6 s after this to
+ * prevent the UI from wiping the damage-overlay animation mid-flight.
+ * A manual rebuild is triggered when the overlay fade finishes.
+ */
+let lastGMHPUpdateTime = 0;
+
 const EYE_OPEN = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display:block" aria-hidden="true"><path d="M0.5 8 Q8 1.5 15.5 8 Q8 14.5 0.5 8Z"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/></svg>`;
 const EYE_SLASH = `<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="display:block" aria-hidden="true"><path d="M0.5 8 Q8 1.5 15.5 8 Q8 14.5 0.5 8Z"/><circle cx="8" cy="8" r="2.5" fill="currentColor" stroke="none"/><line x1="2.5" y1="2.5" x2="13.5" y2="13.5"/></svg>`;
 
@@ -241,6 +249,9 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
           clearInterval(damageFadeTimer!);
           damageFadeTimer = null;
           damageOverlay = null;
+          // Now that the overlay is gone, do the rebuild that was suppressed during
+          // the animation window so the GM list stays in sync with the scene.
+          OBR.scene.items.getItems<Item>(isBossBar).then(items => mountGMUI(app, items));
         }
       }, 50); // 10 steps × 50 ms = 500 ms fade
     }, 4500); // 4.5 s hold before fade begins
@@ -335,6 +346,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
       maxHP:     Math.max(1, parseInt(maxHPEl.value) || 1),
     };
     animatePreviewTo(newHP);
+    lastGMHPUpdateTime = Date.now();
     await updateMapBar(selected.id, draft);
   });
 
@@ -344,6 +356,7 @@ async function mountGMUI(app: HTMLElement, bars: Item[]): Promise<void> {
     draft        = { ...draft, currentHP: newHP };
     curHPEl.value = String(newHP);
     animatePreviewTo(newHP);
+    lastGMHPUpdateTime = Date.now();
     await updateMapBar(selected.id, draft);
   };
 
@@ -395,6 +408,9 @@ OBR.onReady(async () => {
       let gmRebuildTimer: ReturnType<typeof setTimeout> | null = null;
       unsubItems = OBR.scene.items.onChange((items: Item[]) => {
         latestGMItems = items;
+        // Suppress the rebuild while the damage overlay is live (up to 6 s after
+        // the last GM HP change). A rebuild is scheduled when the overlay fades out.
+        if (Date.now() - lastGMHPUpdateTime < 6000) return;
         if (gmRebuildTimer) clearTimeout(gmRebuildTimer);
         gmRebuildTimer = setTimeout(() => {
           gmRebuildTimer = null;
